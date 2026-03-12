@@ -2,64 +2,73 @@ import streamlit as st
 import requests
 import pandas as pd
 
-st.set_page_config(page_title="ClinicalTrials.gov Advanced Search", layout="wide")
+st.set_page_config(page_title="ClinicalTrials.gov Search Tool", layout="wide")
 
 st.title("🔬 ClinicalTrials.gov Advanced Search Tool")
 
-keyword = st.text_input("Enter search keyword (disease, drug, device)")
-max_results = st.slider("Number of studies to retrieve", 10, 500, 100)
+keyword = st.text_input("Enter keyword (disease, drug, device)")
+max_results = st.slider("Number of studies", 10, 500, 100)
 
 
-# ---------- Helper Functions ----------
+# ---------------- SAFE HELPERS ---------------- #
 
-def safe_join(items):
-    if not items:
+def safe_join(values):
+    if not values or not isinstance(values, list):
         return ""
-    return "; ".join(str(i) for i in items)
+    return "; ".join(str(v) for v in values)
 
 
 def extract_outcomes(outcomes):
-    if not outcomes:
+    if not isinstance(outcomes, list):
         return ""
-    measures = []
+    vals = []
     for o in outcomes:
         if isinstance(o, dict):
-            measures.append(o.get("measure", ""))
-    return "; ".join(measures)
+            vals.append(o.get("measure", ""))
+    return "; ".join(vals)
 
 
 def extract_interventions(interventions):
-    if not interventions:
+    if not isinstance(interventions, list):
         return ""
-    names = []
+    vals = []
     for i in interventions:
         if isinstance(i, dict):
-            names.append(i.get("name", ""))
-    return "; ".join(names)
+            vals.append(i.get("name", ""))
+    return "; ".join(vals)
 
 
 def extract_collaborators(collabs):
-    if not collabs:
+    if not isinstance(collabs, list):
         return ""
-    names = []
+    vals = []
     for c in collabs:
         if isinstance(c, dict):
-            names.append(c.get("name", ""))
-    return "; ".join(names)
+            vals.append(c.get("name", ""))
+    return "; ".join(vals)
 
 
 def extract_locations(locations):
-    if not locations:
+
+    if not isinstance(locations, list):
         return ""
 
     locs = []
 
     for loc in locations:
+
         if not isinstance(loc, dict):
             continue
 
-        facility = loc.get("facility") or {}
-        address = facility.get("address") or {}
+        facility = loc.get("facility")
+
+        if not isinstance(facility, dict):
+            facility = {}
+
+        address = facility.get("address")
+
+        if not isinstance(address, dict):
+            address = {}
 
         name = facility.get("name", "")
         city = address.get("city", "")
@@ -70,31 +79,31 @@ def extract_locations(locations):
     return "; ".join(locs)
 
 
-def extract_documents(documents):
-    if not documents:
+def extract_documents(docs):
+    if not isinstance(docs, list):
         return ""
-    docs = []
-    for d in documents:
+    vals = []
+    for d in docs:
         if isinstance(d, dict):
-            docs.append(d.get("type", ""))
-    return "; ".join(docs)
+            vals.append(d.get("type", ""))
+    return "; ".join(vals)
 
 
 def extract_other_ids(ids):
-    if not ids:
+    if not isinstance(ids, list):
         return ""
-    values = []
+    vals = []
     for i in ids:
         if isinstance(i, dict):
-            values.append(i.get("id", ""))
-    return "; ".join(values)
+            vals.append(i.get("id", ""))
+    return "; ".join(vals)
 
 
-# ---------- Search Button ----------
+# ---------------- SEARCH BUTTON ---------------- #
 
 if st.button("Search Clinical Trials"):
 
-    if keyword == "":
+    if keyword.strip() == "":
         st.warning("Please enter a search keyword")
 
     else:
@@ -110,8 +119,7 @@ if st.button("Search Clinical Trials"):
         response = requests.get(url, params=params)
 
         if response.status_code != 200:
-            st.error("Failed to retrieve data from ClinicalTrials.gov")
-
+            st.error("Failed to fetch data from ClinicalTrials.gov")
         else:
 
             data = response.json()
@@ -121,23 +129,27 @@ if st.button("Search Clinical Trials"):
 
             for study in studies:
 
-                protocol = study.get("protocolSection", {})
+                if not isinstance(study, dict):
+                    continue
 
-                id_mod = protocol.get("identificationModule", {})
-                status_mod = protocol.get("statusModule", {})
-                desc_mod = protocol.get("descriptionModule", {})
-                cond_mod = protocol.get("conditionsModule", {})
-                design_mod = protocol.get("designModule", {})
-                outcome_mod = protocol.get("outcomesModule", {})
-                sponsor_mod = protocol.get("sponsorCollaboratorsModule", {})
-                elig_mod = protocol.get("eligibilityModule", {})
-                contact_mod = protocol.get("contactsLocationsModule", {})
-                arms_mod = protocol.get("armsInterventionsModule", {})
-                doc_mod = protocol.get("documentModule", {})
+                protocol = study.get("protocolSection") or {}
+
+                id_mod = protocol.get("identificationModule") or {}
+                status_mod = protocol.get("statusModule") or {}
+                desc_mod = protocol.get("descriptionModule") or {}
+                cond_mod = protocol.get("conditionsModule") or {}
+                design_mod = protocol.get("designModule") or {}
+                outcome_mod = protocol.get("outcomesModule") or {}
+                sponsor_mod = protocol.get("sponsorCollaboratorsModule") or {}
+                elig_mod = protocol.get("eligibilityModule") or {}
+                contact_mod = protocol.get("contactsLocationsModule") or {}
+                arms_mod = protocol.get("armsInterventionsModule") or {}
+                doc_mod = protocol.get("documentModule") or {}
 
                 nct = id_mod.get("nctId", "")
 
                 record = {
+
                     "NCT Number": nct,
                     "Study Title": id_mod.get("briefTitle", ""),
                     "Study URL": f"https://clinicaltrials.gov/study/{nct}",
@@ -150,22 +162,22 @@ if st.button("Search Clinical Trials"):
                     "Primary Outcome Measures": extract_outcomes(outcome_mod.get("primaryOutcomes")),
                     "Secondary Outcome Measures": extract_outcomes(outcome_mod.get("secondaryOutcomes")),
                     "Other Outcome Measures": extract_outcomes(outcome_mod.get("otherOutcomes")),
-                    "Sponsor": sponsor_mod.get("leadSponsor", {}).get("name", ""),
+                    "Sponsor": (sponsor_mod.get("leadSponsor") or {}).get("name", ""),
                     "Collaborators": extract_collaborators(sponsor_mod.get("collaborators")),
                     "Sex": elig_mod.get("sex", ""),
                     "Age": f"{elig_mod.get('minimumAge','')} - {elig_mod.get('maximumAge','')}",
                     "Phases": safe_join(design_mod.get("phases")),
-                    "Enrollment": design_mod.get("enrollmentInfo", {}).get("count", ""),
-                    "Funder Type": sponsor_mod.get("leadSponsor", {}).get("class", ""),
+                    "Enrollment": (design_mod.get("enrollmentInfo") or {}).get("count", ""),
+                    "Funder Type": (sponsor_mod.get("leadSponsor") or {}).get("class", ""),
                     "Study Type": design_mod.get("studyType", ""),
-                    "Study Design": design_mod.get("designInfo", {}).get("allocation", ""),
+                    "Study Design": (design_mod.get("designInfo") or {}).get("allocation", ""),
                     "Other IDs": extract_other_ids(id_mod.get("secondaryIdInfos")),
-                    "Start Date": status_mod.get("startDateStruct", {}).get("date", ""),
-                    "Primary Completion Date": status_mod.get("primaryCompletionDateStruct", {}).get("date", ""),
-                    "Completion Date": status_mod.get("completionDateStruct", {}).get("date", ""),
-                    "First Posted": status_mod.get("studyFirstPostDateStruct", {}).get("date", ""),
-                    "Results First Posted": status_mod.get("resultsFirstPostDateStruct", {}).get("date", ""),
-                    "Last Update Posted": status_mod.get("lastUpdatePostDateStruct", {}).get("date", ""),
+                    "Start Date": (status_mod.get("startDateStruct") or {}).get("date", ""),
+                    "Primary Completion Date": (status_mod.get("primaryCompletionDateStruct") or {}).get("date", ""),
+                    "Completion Date": (status_mod.get("completionDateStruct") or {}).get("date", ""),
+                    "First Posted": (status_mod.get("studyFirstPostDateStruct") or {}).get("date", ""),
+                    "Results First Posted": (status_mod.get("resultsFirstPostDateStruct") or {}).get("date", ""),
+                    "Last Update Posted": (status_mod.get("lastUpdatePostDateStruct") or {}).get("date", ""),
                     "Locations": extract_locations(contact_mod.get("locations")),
                     "Study Documents": extract_documents(doc_mod.get("documents"))
                 }
@@ -181,8 +193,8 @@ if st.button("Search Clinical Trials"):
             csv = df.to_csv(index=False).encode("utf-8")
 
             st.download_button(
-                label="📥 Download CSV",
-                data=csv,
-                file_name="clinical_trials_export.csv",
-                mime="text/csv"
+                "📥 Download CSV",
+                csv,
+                "clinical_trials_export.csv",
+                "text/csv"
             )
