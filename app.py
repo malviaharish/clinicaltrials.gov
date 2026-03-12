@@ -2,12 +2,16 @@ import streamlit as st
 import requests
 import pandas as pd
 
-st.set_page_config(page_title="ClinicalTrials.gov Search Tool", layout="wide")
+st.set_page_config(page_title="ClinicalTrials.gov Multi Search Tool", layout="wide")
 
-st.title("🔬 ClinicalTrials.gov Advanced Search Tool")
+st.title("🔬 ClinicalTrials.gov Multi-Keyword Search Tool")
 
-keyword = st.text_input("Enter keyword (disease, drug, device)")
-max_results = st.slider("Number of studies", 10, 500, 100)
+keywords = st.text_input(
+    "Enter keywords separated by comma",
+    "ACL reconstruction, meniscus"
+)
+
+max_results = st.slider("Number of studies per keyword", 10, 500, 100)
 
 
 # ---------------- SAFE HELPERS ---------------- #
@@ -99,16 +103,17 @@ def extract_other_ids(ids):
     return "; ".join(vals)
 
 
-# ---------------- SEARCH BUTTON ---------------- #
+# ---------------- SEARCH ---------------- #
 
 if st.button("Search Clinical Trials"):
 
-    if keyword.strip() == "":
-        st.warning("Please enter a search keyword")
+    keyword_list = [k.strip() for k in keywords.split(",") if k.strip()]
 
-    else:
+    all_records = []
 
-        url = "https://clinicaltrials.gov/api/v2/studies"
+    url = "https://clinicaltrials.gov/api/v2/studies"
+
+    for keyword in keyword_list:
 
         params = {
             "query.term": keyword,
@@ -119,82 +124,93 @@ if st.button("Search Clinical Trials"):
         response = requests.get(url, params=params)
 
         if response.status_code != 200:
-            st.error("Failed to fetch data from ClinicalTrials.gov")
-        else:
+            st.error(f"Failed to retrieve results for: {keyword}")
+            continue
 
-            data = response.json()
-            studies = data.get("studies", [])
+        data = response.json()
+        studies = data.get("studies", [])
 
-            records = []
+        for study in studies:
 
-            for study in studies:
+            protocol = study.get("protocolSection") or {}
 
-                if not isinstance(study, dict):
-                    continue
+            id_mod = protocol.get("identificationModule") or {}
+            status_mod = protocol.get("statusModule") or {}
+            desc_mod = protocol.get("descriptionModule") or {}
+            cond_mod = protocol.get("conditionsModule") or {}
+            design_mod = protocol.get("designModule") or {}
+            outcome_mod = protocol.get("outcomesModule") or {}
+            sponsor_mod = protocol.get("sponsorCollaboratorsModule") or {}
+            elig_mod = protocol.get("eligibilityModule") or {}
+            contact_mod = protocol.get("contactsLocationsModule") or {}
+            arms_mod = protocol.get("armsInterventionsModule") or {}
+            doc_mod = protocol.get("documentModule") or {}
 
-                protocol = study.get("protocolSection") or {}
+            nct = id_mod.get("nctId", "")
 
-                id_mod = protocol.get("identificationModule") or {}
-                status_mod = protocol.get("statusModule") or {}
-                desc_mod = protocol.get("descriptionModule") or {}
-                cond_mod = protocol.get("conditionsModule") or {}
-                design_mod = protocol.get("designModule") or {}
-                outcome_mod = protocol.get("outcomesModule") or {}
-                sponsor_mod = protocol.get("sponsorCollaboratorsModule") or {}
-                elig_mod = protocol.get("eligibilityModule") or {}
-                contact_mod = protocol.get("contactsLocationsModule") or {}
-                arms_mod = protocol.get("armsInterventionsModule") or {}
-                doc_mod = protocol.get("documentModule") or {}
+            record = {
 
-                nct = id_mod.get("nctId", "")
+                "Search Term": keyword,
+                "NCT Number": nct,
+                "Study Title": id_mod.get("briefTitle", ""),
+                "Study URL": f"https://clinicaltrials.gov/study/{nct}",
+                "Acronym": id_mod.get("acronym", ""),
+                "Study Status": status_mod.get("overallStatus", ""),
+                "Brief Summary": desc_mod.get("briefSummary", ""),
+                "Study Results": status_mod.get("hasResults", ""),
+                "Conditions": safe_join(cond_mod.get("conditions")),
+                "Interventions": extract_interventions(arms_mod.get("interventions")),
+                "Primary Outcome Measures": extract_outcomes(outcome_mod.get("primaryOutcomes")),
+                "Secondary Outcome Measures": extract_outcomes(outcome_mod.get("secondaryOutcomes")),
+                "Other Outcome Measures": extract_outcomes(outcome_mod.get("otherOutcomes")),
+                "Sponsor": (sponsor_mod.get("leadSponsor") or {}).get("name", ""),
+                "Collaborators": extract_collaborators(sponsor_mod.get("collaborators")),
+                "Sex": elig_mod.get("sex", ""),
+                "Age": f"{elig_mod.get('minimumAge','')} - {elig_mod.get('maximumAge','')}",
+                "Phases": safe_join(design_mod.get("phases")),
+                "Enrollment": (design_mod.get("enrollmentInfo") or {}).get("count", ""),
+                "Funder Type": (sponsor_mod.get("leadSponsor") or {}).get("class", ""),
+                "Study Type": design_mod.get("studyType", ""),
+                "Study Design": (design_mod.get("designInfo") or {}).get("allocation", ""),
+                "Other IDs": extract_other_ids(id_mod.get("secondaryIdInfos")),
+                "Start Date": (status_mod.get("startDateStruct") or {}).get("date", ""),
+                "Primary Completion Date": (status_mod.get("primaryCompletionDateStruct") or {}).get("date", ""),
+                "Completion Date": (status_mod.get("completionDateStruct") or {}).get("date", ""),
+                "First Posted": (status_mod.get("studyFirstPostDateStruct") or {}).get("date", ""),
+                "Results First Posted": (status_mod.get("resultsFirstPostDateStruct") or {}).get("date", ""),
+                "Last Update Posted": (status_mod.get("lastUpdatePostDateStruct") or {}).get("date", ""),
+                "Locations": extract_locations(contact_mod.get("locations")),
+                "Study Documents": extract_documents(doc_mod.get("documents"))
+            }
 
-                record = {
+            all_records.append(record)
 
-                    "NCT Number": nct,
-                    "Study Title": id_mod.get("briefTitle", ""),
-                    "Study URL": f"https://clinicaltrials.gov/study/{nct}",
-                    "Acronym": id_mod.get("acronym", ""),
-                    "Study Status": status_mod.get("overallStatus", ""),
-                    "Brief Summary": desc_mod.get("briefSummary", ""),
-                    "Study Results": status_mod.get("hasResults", ""),
-                    "Conditions": safe_join(cond_mod.get("conditions")),
-                    "Interventions": extract_interventions(arms_mod.get("interventions")),
-                    "Primary Outcome Measures": extract_outcomes(outcome_mod.get("primaryOutcomes")),
-                    "Secondary Outcome Measures": extract_outcomes(outcome_mod.get("secondaryOutcomes")),
-                    "Other Outcome Measures": extract_outcomes(outcome_mod.get("otherOutcomes")),
-                    "Sponsor": (sponsor_mod.get("leadSponsor") or {}).get("name", ""),
-                    "Collaborators": extract_collaborators(sponsor_mod.get("collaborators")),
-                    "Sex": elig_mod.get("sex", ""),
-                    "Age": f"{elig_mod.get('minimumAge','')} - {elig_mod.get('maximumAge','')}",
-                    "Phases": safe_join(design_mod.get("phases")),
-                    "Enrollment": (design_mod.get("enrollmentInfo") or {}).get("count", ""),
-                    "Funder Type": (sponsor_mod.get("leadSponsor") or {}).get("class", ""),
-                    "Study Type": design_mod.get("studyType", ""),
-                    "Study Design": (design_mod.get("designInfo") or {}).get("allocation", ""),
-                    "Other IDs": extract_other_ids(id_mod.get("secondaryIdInfos")),
-                    "Start Date": (status_mod.get("startDateStruct") or {}).get("date", ""),
-                    "Primary Completion Date": (status_mod.get("primaryCompletionDateStruct") or {}).get("date", ""),
-                    "Completion Date": (status_mod.get("completionDateStruct") or {}).get("date", ""),
-                    "First Posted": (status_mod.get("studyFirstPostDateStruct") or {}).get("date", ""),
-                    "Results First Posted": (status_mod.get("resultsFirstPostDateStruct") or {}).get("date", ""),
-                    "Last Update Posted": (status_mod.get("lastUpdatePostDateStruct") or {}).get("date", ""),
-                    "Locations": extract_locations(contact_mod.get("locations")),
-                    "Study Documents": extract_documents(doc_mod.get("documents"))
-                }
+    df = pd.DataFrame(all_records)
 
-                records.append(record)
+    # Remove duplicate trials
+    df = df.drop_duplicates(subset=["NCT Number"])
 
-            df = pd.DataFrame(records)
+    st.success(f"{len(df)} unique studies retrieved")
 
-            st.success(f"{len(df)} studies retrieved")
+    st.dataframe(df, use_container_width=True)
 
-            st.dataframe(df, use_container_width=True)
+    # CSV
+    csv = df.to_csv(index=False).encode("utf-8")
 
-            csv = df.to_csv(index=False).encode("utf-8")
+    st.download_button(
+        "📥 Download CSV",
+        csv,
+        "clinical_trials_combined.csv",
+        "text/csv"
+    )
 
-            st.download_button(
-                "📥 Download CSV",
-                csv,
-                "clinical_trials_export.csv",
-                "text/csv"
-            )
+    # Excel
+    excel_file = "clinical_trials_combined.xlsx"
+    df.to_excel(excel_file, index=False)
+
+    with open(excel_file, "rb") as f:
+        st.download_button(
+            "📥 Download Excel",
+            f,
+            excel_file
+        )
