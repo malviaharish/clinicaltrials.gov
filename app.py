@@ -1,6 +1,7 @@
 import streamlit as st
 import requests
 import pandas as pd
+import io
 
 st.set_page_config(page_title="ClinicalTrials.gov Multi Search Tool", layout="wide")
 
@@ -8,13 +9,13 @@ st.title("🔬 ClinicalTrials.gov Multi-Keyword Search Tool")
 
 keywords = st.text_input(
     "Enter keywords separated by comma",
-    "ACL reconstruction, meniscus"
+    "Distal Femoral Osteotomy, Distal Femoral"
 )
 
 max_results = st.slider("Number of studies per keyword", 10, 500, 100)
 
 
-# ---------------- SAFE HELPERS ---------------- #
+# ---------- SAFE HELPERS ---------- #
 
 def safe_join(values):
     if not values or not isinstance(values, list):
@@ -103,12 +104,11 @@ def extract_other_ids(ids):
     return "; ".join(vals)
 
 
-# ---------------- SEARCH ---------------- #
+# ---------- SEARCH BUTTON ---------- #
 
 if st.button("Search Clinical Trials"):
 
     keyword_list = [k.strip() for k in keywords.split(",") if k.strip()]
-
     all_records = []
 
     url = "https://clinicaltrials.gov/api/v2/studies"
@@ -187,30 +187,32 @@ if st.button("Search Clinical Trials"):
 
     df = pd.DataFrame(all_records)
 
-    # Remove duplicate trials
-    df = df.drop_duplicates(subset=["NCT Number"])
-
-    st.success(f"{len(df)} unique studies retrieved")
+    st.success(f"{len(df)} total records retrieved")
 
     st.dataframe(df, use_container_width=True)
 
-    # CSV
-    csv = df.to_csv(index=False).encode("utf-8")
+    # ---------- DUPLICATE PROCESSING ---------- #
+
+    duplicates = df[df.duplicated(subset=["NCT Number"], keep=False)]
+    unique_trials = df.drop_duplicates(subset=["NCT Number"])
+
+    st.write("Unique Trials:", len(unique_trials))
+    st.write("Duplicate Trials:", len(duplicates))
+
+    # ---------- EXCEL EXPORT ---------- #
+
+    excel_buffer = io.BytesIO()
+
+    with pd.ExcelWriter(excel_buffer, engine="openpyxl") as writer:
+        df.to_excel(writer, sheet_name="All Results", index=False)
+        unique_trials.to_excel(writer, sheet_name="Unique Trials", index=False)
+        duplicates.to_excel(writer, sheet_name="Duplicate Trials", index=False)
+
+    excel_buffer.seek(0)
 
     st.download_button(
-        "📥 Download CSV",
-        csv,
-        "clinical_trials_combined.csv",
-        "text/csv"
+        label="📥 Download Excel (3 sheets)",
+        data=excel_buffer,
+        file_name="clinical_trials_results.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
-
-    # Excel
-    excel_file = "clinical_trials_combined.xlsx"
-    df.to_excel(excel_file, index=False)
-
-    with open(excel_file, "rb") as f:
-        st.download_button(
-            "📥 Download Excel",
-            f,
-            excel_file
-        )
