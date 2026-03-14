@@ -2,6 +2,7 @@ import streamlit as st
 import requests
 import pandas as pd
 import io
+import plotly.express as px
 
 st.set_page_config(page_title="ClinicalTrials.gov Multi Search Tool", layout="wide")
 
@@ -12,8 +13,7 @@ keywords = st.text_input(
     "Distal Femoral Osteotomy, Distal Femoral"
 )
 
-max_results = st.slider("Number of studies per keyword", 10, 500, 100)
-
+max_results = st.slider("Maximum trials per keyword", 50, 2000, 500)
 
 # ---------- SAFE HELPERS ---------- #
 
@@ -56,24 +56,18 @@ def extract_collaborators(collabs):
 def extract_locations(locations):
 
     if not isinstance(locations, list):
-        return ""
+        return "", []
 
     locs = []
+    countries = []
 
     for loc in locations:
 
         if not isinstance(loc, dict):
             continue
 
-        facility = loc.get("facility")
-
-        if not isinstance(facility, dict):
-            facility = {}
-
-        address = facility.get("address")
-
-        if not isinstance(address, dict):
-            address = {}
+        facility = loc.get("facility") or {}
+        address = facility.get("address") or {}
 
         name = facility.get("name", "")
         city = address.get("city", "")
@@ -81,7 +75,10 @@ def extract_locations(locations):
 
         locs.append(f"{name} ({city}, {country})")
 
-    return "; ".join(locs)
+        if country:
+            countries.append(country)
+
+    return "; ".join(locs), countries
 
 
 def extract_documents(docs):
@@ -104,114 +101,196 @@ def extract_other_ids(ids):
     return "; ".join(vals)
 
 
-# ---------- SEARCH BUTTON ---------- #
+# ---------- SEARCH ---------- #
 
 if st.button("Search Clinical Trials"):
 
     keyword_list = [k.strip() for k in keywords.split(",") if k.strip()]
+
     all_records = []
+    all_countries = []
 
     url = "https://clinicaltrials.gov/api/v2/studies"
 
     for keyword in keyword_list:
 
+        st.write(f"Fetching trials for: **{keyword}**")
+
         params = {
             "query.term": keyword,
-            "pageSize": max_results,
+            "pageSize": 100,
             "format": "json"
         }
 
-        response = requests.get(url, params=params)
+        next_token = None
+        fetched = 0
 
-        if response.status_code != 200:
-            st.error(f"Failed to retrieve results for: {keyword}")
-            continue
+        while True:
 
-        data = response.json()
-        studies = data.get("studies", [])
+            if next_token:
+                params["pageToken"] = next_token
 
-        for study in studies:
+            response = requests.get(url, params=params)
 
-            protocol = study.get("protocolSection") or {}
+            if response.status_code != 200:
+                st.error(f"Error retrieving {keyword}")
+                break
 
-            id_mod = protocol.get("identificationModule") or {}
-            status_mod = protocol.get("statusModule") or {}
-            desc_mod = protocol.get("descriptionModule") or {}
-            cond_mod = protocol.get("conditionsModule") or {}
-            design_mod = protocol.get("designModule") or {}
-            outcome_mod = protocol.get("outcomesModule") or {}
-            sponsor_mod = protocol.get("sponsorCollaboratorsModule") or {}
-            elig_mod = protocol.get("eligibilityModule") or {}
-            contact_mod = protocol.get("contactsLocationsModule") or {}
-            arms_mod = protocol.get("armsInterventionsModule") or {}
-            doc_mod = protocol.get("documentModule") or {}
+            data = response.json()
 
-            nct = id_mod.get("nctId", "")
+            studies = data.get("studies", [])
 
-            record = {
+            for study in studies:
 
-                "Search Term": keyword,
-                "NCT Number": nct,
-                "Study Title": id_mod.get("briefTitle", ""),
-                "Study URL": f"https://clinicaltrials.gov/study/{nct}",
-                "Acronym": id_mod.get("acronym", ""),
-                "Study Status": status_mod.get("overallStatus", ""),
-                "Brief Summary": desc_mod.get("briefSummary", ""),
-                "Study Results": status_mod.get("hasResults", ""),
-                "Conditions": safe_join(cond_mod.get("conditions")),
-                "Interventions": extract_interventions(arms_mod.get("interventions")),
-                "Primary Outcome Measures": extract_outcomes(outcome_mod.get("primaryOutcomes")),
-                "Secondary Outcome Measures": extract_outcomes(outcome_mod.get("secondaryOutcomes")),
-                "Other Outcome Measures": extract_outcomes(outcome_mod.get("otherOutcomes")),
-                "Sponsor": (sponsor_mod.get("leadSponsor") or {}).get("name", ""),
-                "Collaborators": extract_collaborators(sponsor_mod.get("collaborators")),
-                "Sex": elig_mod.get("sex", ""),
-                "Age": f"{elig_mod.get('minimumAge','')} - {elig_mod.get('maximumAge','')}",
-                "Phases": safe_join(design_mod.get("phases")),
-                "Enrollment": (design_mod.get("enrollmentInfo") or {}).get("count", ""),
-                "Funder Type": (sponsor_mod.get("leadSponsor") or {}).get("class", ""),
-                "Study Type": design_mod.get("studyType", ""),
-                "Study Design": (design_mod.get("designInfo") or {}).get("allocation", ""),
-                "Other IDs": extract_other_ids(id_mod.get("secondaryIdInfos")),
-                "Start Date": (status_mod.get("startDateStruct") or {}).get("date", ""),
-                "Primary Completion Date": (status_mod.get("primaryCompletionDateStruct") or {}).get("date", ""),
-                "Completion Date": (status_mod.get("completionDateStruct") or {}).get("date", ""),
-                "First Posted": (status_mod.get("studyFirstPostDateStruct") or {}).get("date", ""),
-                "Results First Posted": (status_mod.get("resultsFirstPostDateStruct") or {}).get("date", ""),
-                "Last Update Posted": (status_mod.get("lastUpdatePostDateStruct") or {}).get("date", ""),
-                "Locations": extract_locations(contact_mod.get("locations")),
-                "Study Documents": extract_documents(doc_mod.get("documents"))
-            }
+                protocol = study.get("protocolSection") or {}
 
-            all_records.append(record)
+                id_mod = protocol.get("identificationModule") or {}
+                status_mod = protocol.get("statusModule") or {}
+                desc_mod = protocol.get("descriptionModule") or {}
+                cond_mod = protocol.get("conditionsModule") or {}
+                design_mod = protocol.get("designModule") or {}
+                outcome_mod = protocol.get("outcomesModule") or {}
+                sponsor_mod = protocol.get("sponsorCollaboratorsModule") or {}
+                elig_mod = protocol.get("eligibilityModule") or {}
+                contact_mod = protocol.get("contactsLocationsModule") or {}
+                arms_mod = protocol.get("armsInterventionsModule") or {}
+                doc_mod = protocol.get("documentModule") or {}
+
+                nct = id_mod.get("nctId", "")
+
+                locations, countries = extract_locations(contact_mod.get("locations"))
+
+                all_countries.extend(countries)
+
+                record = {
+
+                    "Search Term": keyword,
+                    "NCT Number": nct,
+                    "Study Title": id_mod.get("briefTitle", ""),
+                    "Study URL": f"https://clinicaltrials.gov/study/{nct}",
+                    "Study Status": status_mod.get("overallStatus", ""),
+                    "Brief Summary": desc_mod.get("briefSummary", ""),
+                    "Conditions": safe_join(cond_mod.get("conditions")),
+                    "Interventions": extract_interventions(arms_mod.get("interventions")),
+                    "Primary Outcomes": extract_outcomes(outcome_mod.get("primaryOutcomes")),
+                    "Secondary Outcomes": extract_outcomes(outcome_mod.get("secondaryOutcomes")),
+                    "Sponsor": (sponsor_mod.get("leadSponsor") or {}).get("name", ""),
+                    "Collaborators": extract_collaborators(sponsor_mod.get("collaborators")),
+                    "Sex": elig_mod.get("sex", ""),
+                    "Phases": safe_join(design_mod.get("phases")),
+                    "Enrollment": (design_mod.get("enrollmentInfo") or {}).get("count", ""),
+                    "Study Type": design_mod.get("studyType", ""),
+                    "Start Date": (status_mod.get("startDateStruct") or {}).get("date", ""),
+                    "Completion Date": (status_mod.get("completionDateStruct") or {}).get("date", ""),
+                    "Locations": locations,
+                    "Countries": "; ".join(countries),
+                    "Documents": extract_documents(doc_mod.get("documents"))
+                }
+
+                all_records.append(record)
+
+            fetched += len(studies)
+
+            if fetched >= max_results:
+                break
+
+            next_token = data.get("nextPageToken")
+
+            if not next_token:
+                break
 
     df = pd.DataFrame(all_records)
 
     st.success(f"{len(df)} total records retrieved")
 
-    st.dataframe(df, use_container_width=True)
-
-    # ---------- DUPLICATE PROCESSING ---------- #
+    # ---------- DUPLICATE HANDLING ---------- #
 
     duplicates = df[df.duplicated(subset=["NCT Number"], keep=False)]
     unique_trials = df.drop_duplicates(subset=["NCT Number"])
 
-    st.write("Unique Trials:", len(unique_trials))
-    st.write("Duplicate Trials:", len(duplicates))
+    # ---------- PRISMA STATS ---------- #
+
+    st.subheader("PRISMA Summary")
+
+    col1, col2, col3 = st.columns(3)
+
+    col1.metric("Total Records", len(df))
+    col2.metric("Duplicates", len(duplicates))
+    col3.metric("Unique Trials", len(unique_trials))
+
+    # ---------- SUMMARY PER KEYWORD ---------- #
+
+    st.subheader("Trial Count per Keyword")
+
+    summary = df.groupby("Search Term")["NCT Number"].nunique().reset_index()
+    summary.columns = ["Keyword", "Trials"]
+
+    st.dataframe(summary)
+
+    # ---------- INTERACTIVE CHARTS ---------- #
+
+    st.subheader("Trial Status Distribution")
+
+    fig1 = px.histogram(df, x="Study Status")
+    st.plotly_chart(fig1, use_container_width=True)
+
+    st.subheader("Trials by Study Type")
+
+    fig2 = px.histogram(df, x="Study Type")
+    st.plotly_chart(fig2, use_container_width=True)
+
+    # ---------- COUNTRY MAP ---------- #
+
+    st.subheader("Country Distribution Map")
+
+    country_series = pd.Series(all_countries)
+    country_counts = country_series.value_counts().reset_index()
+    country_counts.columns = ["Country", "Trials"]
+
+    fig_map = px.choropleth(
+        country_counts,
+        locations="Country",
+        locationmode="country names",
+        color="Trials",
+        title="Clinical Trials by Country"
+    )
+
+    st.plotly_chart(fig_map, use_container_width=True)
+
+    # ---------- TRIAL DETAIL VIEWER ---------- #
+
+    st.subheader("Trial Detail Viewer")
+
+    selected_trial = st.selectbox(
+        "Select Trial (NCT Number)",
+        unique_trials["NCT Number"]
+    )
+
+    trial_data = unique_trials[unique_trials["NCT Number"] == selected_trial]
+
+    st.write(trial_data.T)
+
+    # ---------- DATA TABLE ---------- #
+
+    st.subheader("All Trials")
+
+    st.dataframe(unique_trials, use_container_width=True)
 
     # ---------- EXCEL EXPORT ---------- #
 
     excel_buffer = io.BytesIO()
 
     with pd.ExcelWriter(excel_buffer, engine="openpyxl") as writer:
+
         df.to_excel(writer, sheet_name="All Results", index=False)
         unique_trials.to_excel(writer, sheet_name="Unique Trials", index=False)
         duplicates.to_excel(writer, sheet_name="Duplicate Trials", index=False)
+        summary.to_excel(writer, sheet_name="Keyword Summary", index=False)
 
     excel_buffer.seek(0)
 
     st.download_button(
-        label="📥 Download Excel (3 sheets)",
+        label="📥 Download Excel",
         data=excel_buffer,
         file_name="clinical_trials_results.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
