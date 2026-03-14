@@ -3,58 +3,31 @@ import requests
 import pandas as pd
 import io
 import plotly.express as px
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
+from wordcloud import WordCloud
+import matplotlib.pyplot as plt
 
-st.set_page_config(page_title="ClinicalTrials.gov Multi Search Tool", layout="wide")
+st.set_page_config(page_title="Clinical Trials Research Explorer", layout="wide")
 
-st.title("🔬 ClinicalTrials.gov Multi-Keyword Search Tool")
+st.title("🔬 ClinicalTrials Research Explorer")
+
 
 keywords = st.text_input(
     "Enter keywords separated by comma",
     "Distal Femoral Osteotomy, Distal Femoral"
 )
 
-max_results = st.slider("Maximum trials per keyword", 50, 2000, 500)
+max_results = st.slider("Max trials per keyword", 50, 2000, 500)
 
 
-# ---------- SAFE HELPERS ---------- #
+# ---------------- HELPER FUNCTIONS ---------------- #
 
 def safe_join(values):
     if not values or not isinstance(values, list):
         return ""
     return "; ".join(str(v) for v in values)
 
-
-def extract_outcomes(outcomes):
-    if not isinstance(outcomes, list):
-        return ""
-    vals = []
-    for o in outcomes:
-        if isinstance(o, dict):
-            vals.append(o.get("measure", ""))
-    return "; ".join(vals)
-
-
-def extract_interventions(interventions):
-    if not isinstance(interventions, list):
-        return ""
-    vals = []
-    for i in interventions:
-        if isinstance(i, dict):
-            vals.append(i.get("name", ""))
-    return "; ".join(vals)
-
-
-def extract_collaborators(collabs):
-    if not isinstance(collabs, list):
-        return ""
-    vals = []
-    for c in collabs:
-        if isinstance(c, dict):
-            vals.append(c.get("name", ""))
-    return "; ".join(vals)
-
-
-# SAFE LOCATION PARSER (FIXES YOUR ERROR)
 
 def extract_locations(locations):
 
@@ -91,27 +64,7 @@ def extract_locations(locations):
     return "; ".join(locs), countries
 
 
-def extract_documents(docs):
-    if not isinstance(docs, list):
-        return ""
-    vals = []
-    for d in docs:
-        if isinstance(d, dict):
-            vals.append(d.get("type", ""))
-    return "; ".join(vals)
-
-
-def extract_other_ids(ids):
-    if not isinstance(ids, list):
-        return ""
-    vals = []
-    for i in ids:
-        if isinstance(i, dict):
-            vals.append(i.get("id", ""))
-    return "; ".join(vals)
-
-
-# ---------- SEARCH ---------- #
+# ---------------- SEARCH ---------------- #
 
 if st.button("Search Clinical Trials"):
 
@@ -124,7 +77,7 @@ if st.button("Search Clinical Trials"):
 
     for keyword in keyword_list:
 
-        st.write(f"Fetching trials for: **{keyword}**")
+        st.write(f"Searching: **{keyword}**")
 
         params = {
             "query.term": keyword,
@@ -140,13 +93,13 @@ if st.button("Search Clinical Trials"):
             if next_token:
                 params["pageToken"] = next_token
 
-            response = requests.get(url, params=params)
+            r = requests.get(url, params=params)
 
-            if response.status_code != 200:
-                st.error(f"Error retrieving {keyword}")
+            if r.status_code != 200:
+                st.error("API Error")
                 break
 
-            data = response.json()
+            data = r.json()
             studies = data.get("studies", [])
 
             for study in studies:
@@ -158,41 +111,30 @@ if st.button("Search Clinical Trials"):
                 desc_mod = protocol.get("descriptionModule") or {}
                 cond_mod = protocol.get("conditionsModule") or {}
                 design_mod = protocol.get("designModule") or {}
-                outcome_mod = protocol.get("outcomesModule") or {}
-                sponsor_mod = protocol.get("sponsorCollaboratorsModule") or {}
-                elig_mod = protocol.get("eligibilityModule") or {}
                 contact_mod = protocol.get("contactsLocationsModule") or {}
-                arms_mod = protocol.get("armsInterventionsModule") or {}
-                doc_mod = protocol.get("documentModule") or {}
 
                 nct = id_mod.get("nctId", "")
 
-                locations, countries = extract_locations(contact_mod.get("locations"))
+                locations, countries = extract_locations(
+                    contact_mod.get("locations")
+                )
+
                 all_countries.extend(countries)
 
                 record = {
 
-                    "Search Term": keyword,
-                    "NCT Number": nct,
-                    "Study Title": id_mod.get("briefTitle", ""),
-                    "Study URL": f"https://clinicaltrials.gov/study/{nct}",
-                    "Study Status": status_mod.get("overallStatus", ""),
-                    "Brief Summary": desc_mod.get("briefSummary", ""),
+                    "Keyword": keyword,
+                    "NCT": nct,
+                    "Title": id_mod.get("briefTitle", ""),
+                    "URL": f"https://clinicaltrials.gov/study/{nct}",
+                    "Status": status_mod.get("overallStatus", ""),
+                    "Summary": desc_mod.get("briefSummary", ""),
                     "Conditions": safe_join(cond_mod.get("conditions")),
-                    "Interventions": extract_interventions(arms_mod.get("interventions")),
-                    "Primary Outcomes": extract_outcomes(outcome_mod.get("primaryOutcomes")),
-                    "Secondary Outcomes": extract_outcomes(outcome_mod.get("secondaryOutcomes")),
-                    "Sponsor": (sponsor_mod.get("leadSponsor") or {}).get("name", ""),
-                    "Collaborators": extract_collaborators(sponsor_mod.get("collaborators")),
-                    "Sex": elig_mod.get("sex", ""),
-                    "Phases": safe_join(design_mod.get("phases")),
-                    "Enrollment": (design_mod.get("enrollmentInfo") or {}).get("count", ""),
                     "Study Type": design_mod.get("studyType", ""),
                     "Start Date": (status_mod.get("startDateStruct") or {}).get("date", ""),
-                    "Completion Date": (status_mod.get("completionDateStruct") or {}).get("date", ""),
                     "Locations": locations,
-                    "Countries": "; ".join(countries),
-                    "Documents": extract_documents(doc_mod.get("documents"))
+                    "Countries": "; ".join(countries)
+
                 }
 
                 all_records.append(record)
@@ -210,52 +152,55 @@ if st.button("Search Clinical Trials"):
 
     df = pd.DataFrame(all_records)
 
-    st.success(f"{len(df)} total records retrieved")
+    st.success(f"{len(df)} records retrieved")
 
 
-    # ---------- DUPLICATES ---------- #
+# ---------------- PRISMA ---------------- #
 
-    duplicates = df[df.duplicated(subset=["NCT Number"], keep=False)]
-    unique_trials = df.drop_duplicates(subset=["NCT Number"])
+    duplicates = df[df.duplicated(subset=["NCT"], keep=False)]
+    unique_df = df.drop_duplicates(subset=["NCT"])
 
+    st.subheader("PRISMA Statistics")
 
-    # ---------- PRISMA SUMMARY ---------- #
+    c1, c2, c3 = st.columns(3)
 
-    st.subheader("PRISMA Summary")
-
-    col1, col2, col3 = st.columns(3)
-
-    col1.metric("Total Records", len(df))
-    col2.metric("Duplicates", len(duplicates))
-    col3.metric("Unique Trials", len(unique_trials))
+    c1.metric("Total Records", len(df))
+    c2.metric("Duplicates", len(duplicates))
+    c3.metric("Unique Trials", len(unique_df))
 
 
-    # ---------- KEYWORD SUMMARY ---------- #
+# ---------------- SUMMARY PER KEYWORD ---------------- #
 
     st.subheader("Trial Count per Keyword")
 
-    summary = df.groupby("Search Term")["NCT Number"].nunique().reset_index()
+    summary = df.groupby("Keyword")["NCT"].nunique().reset_index()
     summary.columns = ["Keyword", "Trials"]
 
     st.dataframe(summary)
 
 
-    # ---------- INTERACTIVE CHARTS ---------- #
+# ---------------- CHARTS ---------------- #
 
     st.subheader("Trial Status Distribution")
 
-    fig1 = px.histogram(df, x="Study Status")
+    fig1 = px.histogram(df, x="Status")
     st.plotly_chart(fig1, use_container_width=True)
 
-    st.subheader("Trials by Study Type")
 
-    fig2 = px.histogram(df, x="Study Type")
+# ---------------- TIMELINE ---------------- #
+
+    st.subheader("Trials Timeline")
+
+    df["Year"] = pd.to_datetime(df["Start Date"], errors="coerce").dt.year
+
+    fig2 = px.histogram(df, x="Year")
+
     st.plotly_chart(fig2, use_container_width=True)
 
 
-    # ---------- COUNTRY MAP ---------- #
+# ---------------- COUNTRY MAP ---------------- #
 
-    st.subheader("Country Distribution Map")
+    st.subheader("Country Distribution")
 
     country_series = pd.Series(all_countries)
 
@@ -272,43 +217,79 @@ if st.button("Search Clinical Trials"):
     st.plotly_chart(fig_map, use_container_width=True)
 
 
-    # ---------- TRIAL DETAIL VIEWER ---------- #
+# ---------------- WORDCLOUD ---------------- #
+
+    st.subheader("Research Topics (Word Cloud)")
+
+    text = " ".join(unique_df["Title"].dropna())
+
+    wc = WordCloud(width=800, height=400).generate(text)
+
+    fig, ax = plt.subplots()
+    ax.imshow(wc)
+    ax.axis("off")
+
+    st.pyplot(fig)
+
+
+# ---------------- SIMILAR STUDIES ---------------- #
+
+    st.subheader("Find Similar Trials")
+
+    titles = unique_df["Title"].fillna("")
+
+    vectorizer = TfidfVectorizer(stop_words="english")
+
+    matrix = vectorizer.fit_transform(titles)
+
+    similarity = cosine_similarity(matrix)
+
+    trial = st.selectbox("Select Trial", unique_df["NCT"])
+
+    idx = unique_df.index[unique_df["NCT"] == trial][0]
+
+    sim_scores = list(enumerate(similarity[idx]))
+
+    sim_scores = sorted(sim_scores, key=lambda x: x[1], reverse=True)[1:6]
+
+    similar_indices = [i[0] for i in sim_scores]
+
+    similar_trials = unique_df.iloc[similar_indices]
+
+    st.dataframe(similar_trials[["NCT", "Title", "Status"]])
+
+
+# ---------------- DETAIL VIEW ---------------- #
 
     st.subheader("Trial Detail Viewer")
 
-    selected_trial = st.selectbox(
-        "Select Trial (NCT Number)",
-        unique_trials["NCT Number"]
-    )
-
-    trial_data = unique_trials[unique_trials["NCT Number"] == selected_trial]
+    trial_data = unique_df[unique_df["NCT"] == trial]
 
     st.write(trial_data.T)
 
 
-    # ---------- DATA TABLE ---------- #
+# ---------------- DATA TABLE ---------------- #
 
-    st.subheader("All Unique Trials")
+    st.subheader("All Trials")
 
-    st.dataframe(unique_trials, use_container_width=True)
+    st.dataframe(unique_df, use_container_width=True)
 
 
-    # ---------- EXCEL EXPORT ---------- #
+# ---------------- EXPORT ---------------- #
 
-    excel_buffer = io.BytesIO()
+    buffer = io.BytesIO()
 
-    with pd.ExcelWriter(excel_buffer, engine="openpyxl") as writer:
+    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
 
         df.to_excel(writer, sheet_name="All Results", index=False)
-        unique_trials.to_excel(writer, sheet_name="Unique Trials", index=False)
-        duplicates.to_excel(writer, sheet_name="Duplicate Trials", index=False)
+        unique_df.to_excel(writer, sheet_name="Unique Trials", index=False)
+        duplicates.to_excel(writer, sheet_name="Duplicates", index=False)
         summary.to_excel(writer, sheet_name="Keyword Summary", index=False)
 
-    excel_buffer.seek(0)
+    buffer.seek(0)
 
     st.download_button(
-        label="📥 Download Excel",
-        data=excel_buffer,
-        file_name="clinical_trials_results.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        "Download Excel",
+        buffer,
+        "clinical_trials_results.xlsx"
     )
