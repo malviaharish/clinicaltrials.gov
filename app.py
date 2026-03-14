@@ -160,7 +160,7 @@ if st.button("Search Clinical Trials"):
     duplicates = df[df.duplicated(subset=["NCT"], keep=False)]
     unique_df = df.drop_duplicates(subset=["NCT"])
 
-    st.subheader("PRISMA Statistics")
+    st.subheader("Statistics")
 
     c1, c2, c3 = st.columns(3)
 
@@ -196,40 +196,6 @@ if st.button("Search Clinical Trials"):
     fig2 = px.histogram(df, x="Year")
 
     st.plotly_chart(fig2, use_container_width=True)
-
-
-# ---------------- COUNTRY MAP ---------------- #
-
-    st.subheader("Country Distribution")
-
-    country_series = pd.Series(all_countries)
-
-    country_counts = country_series.value_counts().reset_index()
-    country_counts.columns = ["Country", "Trials"]
-
-    fig_map = px.choropleth(
-        country_counts,
-        locations="Country",
-        locationmode="country names",
-        color="Trials"
-    )
-
-    st.plotly_chart(fig_map, use_container_width=True)
-
-
-# ---------------- WORDCLOUD ---------------- #
-
-    st.subheader("Research Topics (Word Cloud)")
-
-    text = " ".join(unique_df["Title"].dropna())
-
-    wc = WordCloud(width=800, height=400).generate(text)
-
-    fig, ax = plt.subplots()
-    ax.imshow(wc)
-    ax.axis("off")
-
-    st.pyplot(fig)
 
 
 # ---------------- SIMILAR STUDIES ---------------- #
