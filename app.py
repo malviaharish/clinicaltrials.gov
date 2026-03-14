@@ -15,6 +15,7 @@ keywords = st.text_input(
 
 max_results = st.slider("Maximum trials per keyword", 50, 2000, 500)
 
+
 # ---------- SAFE HELPERS ---------- #
 
 def safe_join(values):
@@ -53,6 +54,8 @@ def extract_collaborators(collabs):
     return "; ".join(vals)
 
 
+# SAFE LOCATION PARSER (FIXES YOUR ERROR)
+
 def extract_locations(locations):
 
     if not isinstance(locations, list):
@@ -66,8 +69,15 @@ def extract_locations(locations):
         if not isinstance(loc, dict):
             continue
 
-        facility = loc.get("facility") or {}
-        address = facility.get("address") or {}
+        facility = loc.get("facility")
+
+        if not isinstance(facility, dict):
+            facility = {}
+
+        address = facility.get("address")
+
+        if not isinstance(address, dict):
+            address = {}
 
         name = facility.get("name", "")
         city = address.get("city", "")
@@ -137,7 +147,6 @@ if st.button("Search Clinical Trials"):
                 break
 
             data = response.json()
-
             studies = data.get("studies", [])
 
             for study in studies:
@@ -159,7 +168,6 @@ if st.button("Search Clinical Trials"):
                 nct = id_mod.get("nctId", "")
 
                 locations, countries = extract_locations(contact_mod.get("locations"))
-
                 all_countries.extend(countries)
 
                 record = {
@@ -199,16 +207,19 @@ if st.button("Search Clinical Trials"):
             if not next_token:
                 break
 
+
     df = pd.DataFrame(all_records)
 
     st.success(f"{len(df)} total records retrieved")
 
-    # ---------- DUPLICATE HANDLING ---------- #
+
+    # ---------- DUPLICATES ---------- #
 
     duplicates = df[df.duplicated(subset=["NCT Number"], keep=False)]
     unique_trials = df.drop_duplicates(subset=["NCT Number"])
 
-    # ---------- PRISMA STATS ---------- #
+
+    # ---------- PRISMA SUMMARY ---------- #
 
     st.subheader("PRISMA Summary")
 
@@ -218,7 +229,8 @@ if st.button("Search Clinical Trials"):
     col2.metric("Duplicates", len(duplicates))
     col3.metric("Unique Trials", len(unique_trials))
 
-    # ---------- SUMMARY PER KEYWORD ---------- #
+
+    # ---------- KEYWORD SUMMARY ---------- #
 
     st.subheader("Trial Count per Keyword")
 
@@ -226,6 +238,7 @@ if st.button("Search Clinical Trials"):
     summary.columns = ["Keyword", "Trials"]
 
     st.dataframe(summary)
+
 
     # ---------- INTERACTIVE CHARTS ---------- #
 
@@ -239,11 +252,13 @@ if st.button("Search Clinical Trials"):
     fig2 = px.histogram(df, x="Study Type")
     st.plotly_chart(fig2, use_container_width=True)
 
+
     # ---------- COUNTRY MAP ---------- #
 
     st.subheader("Country Distribution Map")
 
     country_series = pd.Series(all_countries)
+
     country_counts = country_series.value_counts().reset_index()
     country_counts.columns = ["Country", "Trials"]
 
@@ -251,11 +266,11 @@ if st.button("Search Clinical Trials"):
         country_counts,
         locations="Country",
         locationmode="country names",
-        color="Trials",
-        title="Clinical Trials by Country"
+        color="Trials"
     )
 
     st.plotly_chart(fig_map, use_container_width=True)
+
 
     # ---------- TRIAL DETAIL VIEWER ---------- #
 
@@ -270,11 +285,13 @@ if st.button("Search Clinical Trials"):
 
     st.write(trial_data.T)
 
+
     # ---------- DATA TABLE ---------- #
 
-    st.subheader("All Trials")
+    st.subheader("All Unique Trials")
 
     st.dataframe(unique_trials, use_container_width=True)
+
 
     # ---------- EXCEL EXPORT ---------- #
 
